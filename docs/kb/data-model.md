@@ -19,6 +19,7 @@ attempts    听写记录  id, sentence_id, mode, input,
 
 words       生词      word (PK), first_seen_sentence_id, last_error_sentence_id,
                       error_count, graduated,
+                      exposed_on,             -- 当日已在轻档明文露出过，推迟一天再排
                       due, stability, difficulty, elapsed_days,
                       scheduled_days, reps, lapses, state, last_review
 
@@ -51,6 +52,7 @@ daily       日汇总    date, lane, minutes, sentences_done,
 | `materials.current_sentence_idx` | 显式记断点，**任何档位推进都更新**。断点必须显式，不依赖对 `attempts` 的任何反推 |
 | `words` 铺平 ts-fsrs Card 全部字段 | `lapses`、`scheduled_days` 无法从 `reviews` 反推，必须持久化 |
 | `words.last_error_sentence_id` | 复习卡片播**最近**一次听错的那句，不是第一次 |
+| `words.exposed_on` | 轻档只挖 N 个空，句中其余 due 词是明文显示的。当天再复习它们评分会虚高，所以标记曝光日期、推迟一天。日期格式 `YYYY-MM-DD`，与 `due` 保持一致——`findDue` 是字符串比较，混用 ISO 时间戳会静默查空 |
 | `reviews.source` | 区分评分来自独立复习还是听写联动，排查调度异常用 |
 | `daily` 存 JSON 分布而非单值 | 用户一天内完全可能切档。单值会丢信息且导致混算 |
 
