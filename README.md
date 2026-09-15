@@ -9,7 +9,13 @@
 以听写驱动的英语精听训练台，训练行为本身产出全部数据（零手工录入），听错的词自动进入
 FSRS 间隔重复队列，复习卡片带原音频语境。四级是第一个里程碑，六级复用同一套系统。
 
-设计文档：[`docs/superpowers/specs/2026-09-15-cet-listening-workbench-design.md`](docs/superpowers/specs/2026-09-15-cet-listening-workbench-design.md)
+## 文档
+
+| 看什么 | 去哪 |
+|---|---|
+| **知识库**（活文档，随实现演进） | [`docs/kb/`](docs/kb/) —— 改动前必读 [user-profile.md](docs/kb/user-profile.md)，修 bug 前必读 [pitfalls.md](docs/kb/pitfalls.md) |
+| 设计快照（成文即冻结） | [`docs/superpowers/specs/2026-09-15-cet-listening-workbench-design.md`](docs/superpowers/specs/2026-09-15-cet-listening-workbench-design.md) |
+| 项目规则 | [`CLAUDE.md`](CLAUDE.md) |
 
 ## 规划中的其余线
 
