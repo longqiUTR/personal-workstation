@@ -66,8 +66,7 @@ function mapRow(row: WordDbRow): WordRow {
       lapses: Number(row.lapses),
       state: Number(row.state) as State,
       last_review: row.last_review === null ? undefined : isoToDate(row.last_review),
-      // 见文件顶部注释：schema 没有这一列，固定回填 0。
-      learning_steps: row.learning_steps,
+      learning_steps: Number(row.learning_steps),
     },
   }
 }
