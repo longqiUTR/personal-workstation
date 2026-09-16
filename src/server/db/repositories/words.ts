@@ -1,21 +1,6 @@
 import type { Card, State } from 'ts-fsrs'
 import type { Db } from '../connection'
 
-/**
- * 对应 schema.sql 的 words 表。card 铺平了 ts-fsrs Card 的字段
- * （due/stability/difficulty/elapsed_days/scheduled_days/reps/lapses/state/last_review）。
- *
- * ⚠️ 已知缺口：本仓库安装的 ts-fsrs 5.4.2 的 Card 类型实际还有一个
- * `learning_steps: number` 字段（用于短期学习阶段的分步计时），但 schema.sql
- * （task 8a 定的表结构，本任务不允许改）没有对应列。任务说明列出的 9 个字段
- * 里也没有它，与当前装的版本对不上——大概率是任务撰写时参照的是更早、还没有
- * `learning_steps` 的 ts-fsrs 版本。这里的处理方式：读出来的 Card 固定把
- * learning_steps 填 0（与 createEmptyCard() 的初始值一致），写入时忽略调用方
- * 传入的 learning_steps（没地方存）。影响范围：只影响"学习/重学阶段内部的分步
- * 计时"这一个细粒度状态，不影响 stability/difficulty/reps/lapses/state 等
- * 决定长期调度的核心字段。如果后续要保真这个字段，需要给 words 表加列，
- * 但那是要单独评估、需要动 schema.sql 的事，不在本任务范围内。
- */
 export interface WordRow {
   word: string
   firstSeenSentenceId: number | null
@@ -38,6 +23,7 @@ interface WordDbRow {
   difficulty: number
   elapsed_days: number
   scheduled_days: number
+  learning_steps: number
   reps: number
   lapses: number
   state: number
@@ -81,7 +67,7 @@ function mapRow(row: WordDbRow): WordRow {
       state: Number(row.state) as State,
       last_review: row.last_review === null ? undefined : isoToDate(row.last_review),
       // 见文件顶部注释：schema 没有这一列，固定回填 0。
-      learning_steps: 0,
+      learning_steps: row.learning_steps,
     },
   }
 }
@@ -118,18 +104,14 @@ export function createWordsRepo(db: Db) {
     },
 
     /**
-     * 记录"这个词被听错了一次"。新词插入（error_count = 1，first_seen 记为
-     * 本次句子）；已存在的词递增 error_count、把 last_error_sentence_id 更新为
-     * 本次句子、并清掉 graduated。
+     * 只负责持久化，不替 FSRS 做调度决定：due 如实写 card.due。
      *
-     * due 直接采用调用方传入的 today（转成 YYYY-MM-DD），而不是从 card.due
-     * 换算——这是刻意的：srs.md 的毕业条件写明"毕业后若再次听错，state 重置
-     * 并重新入队"，重新入队要在 findDue 的 due <= today 判据下真正生效，不能
-     * 依赖调用方算出的 card.due 恰好落在今天或更早。card 的其余字段
-     * （stability/difficulty/elapsed_days/scheduled_days/reps/lapses/state/
-     * last_review）原样持久化，由调用方负责算出"重置后"的形状。
+     * 曾经这里强制把 due 写成"今天"，理由是"毕业词再次听错要重新入队"。
+     * 那是越界——调用方拿到的 card 已经是 FSRS 对这次 Again 的安排，
+     * 覆盖它等于让持久化层推翻调度器。真需要当天再练，应由 Task 10 的
+     * 调度服务在算 card 时决定，而不是在这里改写结果。
      */
-    upsertError(word: string, sentenceId: number, card: Card, today: string): void {
+    upsertError(word: string, sentenceId: number, card: Card): void {
       const exists = db.get(`SELECT word FROM words WHERE word = ?`, [word])
       const lastReview = card.last_review ? card.last_review.toISOString() : null
 
@@ -140,15 +122,16 @@ export function createWordsRepo(db: Db) {
              error_count = error_count + 1,
              graduated = 0,
              due = ?, stability = ?, difficulty = ?, elapsed_days = ?, scheduled_days = ?,
-             reps = ?, lapses = ?, state = ?, last_review = ?
+             learning_steps = ?, reps = ?, lapses = ?, state = ?, last_review = ?
            WHERE word = ?`,
           [
             sentenceId,
-            today,
+            dateToYmd(card.due),
             card.stability,
             card.difficulty,
             card.elapsed_days,
             card.scheduled_days,
+            card.learning_steps,
             card.reps,
             card.lapses,
             card.state,
@@ -160,17 +143,19 @@ export function createWordsRepo(db: Db) {
         db.run(
           `INSERT INTO words
              (word, first_seen_sentence_id, last_error_sentence_id, error_count, graduated,
-              due, stability, difficulty, elapsed_days, scheduled_days, reps, lapses, state, last_review)
-           VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              due, stability, difficulty, elapsed_days, scheduled_days, learning_steps,
+              reps, lapses, state, last_review)
+           VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             word,
             sentenceId,
             sentenceId,
-            today,
+            dateToYmd(card.due),
             card.stability,
             card.difficulty,
             card.elapsed_days,
             card.scheduled_days,
+            card.learning_steps,
             card.reps,
             card.lapses,
             card.state,
@@ -186,7 +171,7 @@ export function createWordsRepo(db: Db) {
       db.run(
         `UPDATE words SET
            due = ?, stability = ?, difficulty = ?, elapsed_days = ?, scheduled_days = ?,
-           reps = ?, lapses = ?, state = ?, last_review = ?
+           learning_steps = ?, reps = ?, lapses = ?, state = ?, last_review = ?
          WHERE word = ?`,
         [
           dateToYmd(card.due),
@@ -194,6 +179,7 @@ export function createWordsRepo(db: Db) {
           card.difficulty,
           card.elapsed_days,
           card.scheduled_days,
+          card.learning_steps,
           card.reps,
           card.lapses,
           card.state,

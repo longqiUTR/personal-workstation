@@ -21,7 +21,7 @@ words       生词      word (PK), first_seen_sentence_id, last_error_sentence_i
                       error_count, graduated,
                       exposed_on,             -- 当日已在轻档明文露出过，推迟一天再排
                       due, stability, difficulty, elapsed_days,
-                      scheduled_days, reps, lapses, state, last_review
+                      scheduled_days, learning_steps, reps, lapses, state, last_review
 
 reviews     复习记录  id, word, rating, source,   -- source: review | dictation
                       replay_count, reviewed_at
@@ -50,7 +50,8 @@ daily       日汇总    date, lane, minutes, sentences_done,
 | 三个 `source` 字段含义不同 | `materials.source`=bbc/voa/cet4/cet6、`mocks.source`=cet4/cet6、`reviews.source`=review/dictation。repository 层用不同类型区分，避免串用 |
 | **保命档同样落 `attempts` 行** | `accuracy = NULL`、`comprehended` 有值。这点定死，不留"可配置"的余地 |
 | `materials.current_sentence_idx` | 显式记断点，**任何档位推进都更新**。断点必须显式，不依赖对 `attempts` 的任何反推 |
-| `words` 铺平 ts-fsrs Card 全部字段 | `lapses`、`scheduled_days` 无法从 `reviews` 反推，必须持久化 |
+| `words` 铺平 ts-fsrs Card 全部字段 | `lapses`、`scheduled_days` 无法从 `reviews` 反推，必须持久化。**实测 ts-fsrs 5.4.2 的 `Card` 是 10 个字段**，比设计稿多一个 `learning_steps`——漏了它，学习/重学阶段的卡片每次从库里读出来都被打回第一步。落库前对着 `node_modules/ts-fsrs/dist/index.d.ts` 核一遍，别凭记忆 |
+| `upsertError` 如实写 `card.due`，不改写成"今天" | repository 只负责持久化，不替 FSRS 做调度决定。曾经这里强制把 due 设成今天，理由是"毕业词再次听错要重新入队"——那是越界：调用方传进来的 card 已经是 FSRS 对这次 Again 的安排，覆盖它等于让持久化层推翻调度器。真要当天再练，应在调度服务算 card 时决定 |
 | `words.last_error_sentence_id` | 复习卡片播**最近**一次听错的那句，不是第一次 |
 | `words.exposed_on` | 轻档只挖 N 个空，句中其余 due 词是明文显示的。当天再复习它们评分会虚高，所以标记曝光日期、推迟一天。日期格式 `YYYY-MM-DD`，与 `due` 保持一致——`findDue` 是字符串比较，混用 ISO 时间戳会静默查空 |
 | `reviews.source` | 区分评分来自独立复习还是听写联动，排查调度异常用 |

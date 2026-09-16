@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS words (
   stability              REAL    NOT NULL,
   difficulty             REAL    NOT NULL,
   elapsed_days           INTEGER NOT NULL,
-  scheduled_days         INTEGER NOT NULL,  -- 与 lapses 一样，铺平自 ts-fsrs Card，无法从 reviews 反推，必须持久化
+  scheduled_days         INTEGER NOT NULL,
+  -- ts-fsrs 5.4.2 的 Card 有这个字段，记录学习/重学阶段走到第几步。
+  -- 不持久化的话，每次从库里读出来都归零，学习阶段的卡片会被反复打回第一步
+  learning_steps         INTEGER NOT NULL DEFAULT 0,  -- 与 lapses 一样，铺平自 ts-fsrs Card，无法从 reviews 反推，必须持久化
   reps                   INTEGER NOT NULL,
   lapses                 INTEGER NOT NULL,
   state                  INTEGER NOT NULL,

@@ -255,12 +255,12 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('ubiquitous', sentenceId, makeCard(), '2026-09-16')
+    repo.upsertError('ubiquitous', sentenceId, makeCard({ learning_steps: 2 }))
     const row = repo.get('ubiquitous')
 
     expect(row).not.toBeNull()
-    // due 取自 upsertError 的 today 参数而非 card.due——见 words.ts 里的注释
-    expect(row!.card.due).toEqual(new Date('2026-09-16'))
+    // due 如实取自 card.due：repository 只负责持久化，不替 FSRS 做调度决定
+    expect(row!.card.due).toEqual(new Date('2026-09-20'))
     expect(row!.card.stability).toBe(4.2)
     expect(row!.card.difficulty).toBe(6.7)
     expect(row!.card.elapsed_days).toBe(5)
@@ -269,6 +269,8 @@ describe('words repo', () => {
     expect(row!.card.lapses).toBe(3)
     expect(row!.card.state).toBe(State.Review)
     expect(row!.card.last_review).toEqual(new Date('2026-09-13T08:00:00.000Z'))
+    // learning_steps 不持久化的话，学习阶段的卡片每次读出来都会被打回第一步
+    expect(row!.card.learning_steps).toBe(2)
 
     expect(row!.errorCount).toBe(1)
     expect(row!.firstSeenSentenceId).toBe(sentenceId)
@@ -284,7 +286,7 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('meticulous', sentenceId, makeCard({ lapses: 0 }), '2026-09-10')
+    repo.upsertError('meticulous', sentenceId, makeCard({ lapses: 0 }))
     repo.updateCard(
       'meticulous',
       makeCard({ due: new Date('2026-09-25T00:00:00.000Z'), lapses: 4, scheduled_days: 15 }),
@@ -303,11 +305,11 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('abandon', sentenceId, makeCard(), '2026-09-10')
+    repo.upsertError('abandon', sentenceId, makeCard())
     repo.markGraduated('abandon')
     expect(repo.get('abandon')?.graduated).toBe(true)
 
-    repo.upsertError('abandon', sentenceId, makeCard(), '2026-09-16')
+    repo.upsertError('abandon', sentenceId, makeCard())
     const row = repo.get('abandon')
     expect(row?.errorCount).toBe(2)
     // 毕业词再次听错必须重新入队——srs.md「毕业后若再次听错，state 重置并重新入队」
@@ -321,8 +323,10 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('alpha', sentenceId, makeCard(), '2026-09-10')
-    repo.upsertError('beta', sentenceId, makeCard(), '2026-09-10')
+    // due 必须早于查询日，否则这条用例会因为"未到期"而通过，测不到 graduated 过滤
+    const dueCard = makeCard({ due: new Date('2026-09-15T00:00:00.000Z') })
+    repo.upsertError('alpha', sentenceId, dueCard)
+    repo.upsertError('beta', sentenceId, dueCard)
     repo.markGraduated('beta')
 
     expect(repo.findDue('2026-09-16', 10).map((w) => w.word)).toEqual(['alpha'])
@@ -335,8 +339,9 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('gamma', sentenceId, makeCard(), '2026-09-10')
-    repo.upsertError('delta', sentenceId, makeCard(), '2026-09-10')
+    const dueCard = makeCard({ due: new Date('2026-09-15T00:00:00.000Z') })
+    repo.upsertError('gamma', sentenceId, dueCard)
+    repo.upsertError('delta', sentenceId, dueCard)
     repo.markExposed('gamma', '2026-09-16') // 今天曝光过 -> 排除
     repo.markExposed('delta', '2026-09-14') // 更早曝光过 -> 仍然命中
 
@@ -350,8 +355,8 @@ describe('words repo', () => {
     const { sentenceId } = seedMaterialAndSentence(db)
     const repo = createWordsRepo(db)
 
-    repo.upsertError('one', sentenceId, makeCard(), '2026-09-10')
-    repo.upsertError('two', sentenceId, makeCard(), '2026-09-10')
+    repo.upsertError('one', sentenceId, makeCard())
+    repo.upsertError('two', sentenceId, makeCard())
 
     expect(
       repo
