@@ -55,6 +55,16 @@ export function createReviewsRepo(db: Db) {
       const row = db.get(`SELECT COUNT(*) AS cnt FROM reviews WHERE word = ?`, [word])
       return row ? Number((row as unknown as { cnt: number }).cnt) : 0
     },
+
+    // 调度服务用来做同日去重：Again 只把 due 拨到一分钟后，按天截断的
+    // words.due 当天就会显示"到期"，不靠这个查询排掉今天已经评过分的词，
+    // 复习队列在一次会话内永远清不空。reviewed_at 是完整 ISO 字符串，
+    // 取前 10 位和调用方传入的 YYYY-MM-DD 做字符串比较，口径与 words.due 一致。
+    wordsReviewedOn(date: string): string[] {
+      return db
+        .all(`SELECT DISTINCT word FROM reviews WHERE substr(reviewed_at, 1, 10) = ?`, [date])
+        .map((row) => (row as unknown as { word: string }).word)
+    },
   }
 }
 
