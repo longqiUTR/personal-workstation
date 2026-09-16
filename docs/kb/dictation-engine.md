@@ -90,10 +90,14 @@
 ## 归一化流水线（顺序固定，不可调换）
 
 1. 转小写
-2. **展开缩写**（白名单）：`don't→do not`、`doesn't`、`didn't`、`can't/cannot→can not`、`won't→will not`、`isn't`、`aren't`、`wasn't`、`weren't`、`gonna→going to`、`wanna→want to`
-3. 去除**词首尾**标点（词内撇号保留）
-4. 折叠连续空白
-5. 按空白分词
+2. **弯撇号归一为直撇号**（`’`/`ʼ`/`′` → `'`）
+3. **展开缩写**（白名单）：`don't→do not`、`doesn't`、`didn't`、`can't/cannot→can not`、`won't→will not`、`isn't`、`aren't`、`wasn't`、`weren't`、`gonna→going to`、`wanna→want to`
+4. 连字符视为词边界（`well-known` → `well known`）
+5. 去除**词首尾**标点（词内撇号保留）
+6. 折叠连续空白
+7. 按空白分词
+
+实现见 [`src/shared/normalize.ts`](../../src/shared/normalize.ts)，与 [`tests/shared/normalize.test.ts`](../../tests/shared/normalize.test.ts) 一一对应。
 
 ### `'s` / `'re` / `'ve` / `'ll` 一律不展开
 
@@ -102,6 +106,14 @@
 归一化后 `it's ≠ its`——**这是期望行为，不是 bug。**
 
 `n't` 类相反：`don't` 与 `do not` 连读中难以区分，transcript 写法也不稳定，判错属误伤，所以进白名单。
+
+### 弯撇号归一必须排在展开缩写之前
+
+BBC/VOA 的 transcript 用 `’`（U+2019），用户键盘打的是 `'`（U+0027）。白名单正则按直撇号写死，不先归一的话 `don't`（弯撇号）永远匹配不上，缩写展开在真实素材上直接失效——不是极端情况，是**主力素材源的默认书写**。
+
+### 词首尾去标点顺带解决了弯引号包生词的问题
+
+6 Minute English 每期都用弯引号包装当期生词（如 `‘bewildered’`），归一化第 2 步已把弯引号也转成直引号，第 5 步的"去词首尾标点"会把它们一起剥掉。**这一步不能只处理常见标点、漏掉引号**——漏掉的话生词 token 会带着引号变成 `'bewildered'`，永远无法和用户打的 `bewildered` 判等，白白把这批核心生词的听写判定废掉。
 
 ### 第 2 步必须是字符串级正则替换
 
