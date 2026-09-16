@@ -75,7 +75,8 @@
 
 ## 7. 提交
 
-- **提交和推送前都要先问我**
+- **改完直接提交并推送，不用问我**（2026-09-16 起）。这条覆盖 `~/.claude/CLAUDE.md` 里"提交或推送前必须先问我"的通用规则，仅对本项目生效
 - commit message **英文**（Conventional Commits）
 - 原子提交：不同逻辑单元分开提
 - 远程：https://github.com/longqiUTR/personal-workstation.git
+- 例外：`git push -f`、`git reset --hard`、删分支这类不可逆操作仍然要先问

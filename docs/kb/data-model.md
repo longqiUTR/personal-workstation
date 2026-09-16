@@ -76,8 +76,25 @@ daily       日汇总    date, lane, minutes, sentences_done,
 - `materials.source`：`bbc` / `voa` / `cet4` / `cet6` —— 接六级只需新增取值，系统无需改动
 - `materials.lane` 与 `daily.lane`：`english` / `grad` / `work` / `kid` / `health` —— 第一期恒为 `english`。未来接入读研/上班/孩子/养生时，总览页的热力图和掉线预警可直接复用
 
+## 存储引擎：node-sqlite3-wasm
+
+**不是 `better-sqlite3`。** 它在本机装不上：没有 Node 20 的预编译二进制，回落到 node-gyp 编译时缺 Visual Studio C++ 工具链（`Could not find any Visual Studio installation`）。
+
+换成 WASM 版 SQLite，零编译。已实测可用：建表、带 `WHERE` 的部分索引、参数化查询、`all`/`get`/`run`、关闭重开后的文件持久化。**`schema.sql` 不需要任何改动。**
+
+⚠️ 它是 **CommonJS** 包，本项目是 `"type": "module"`，必须 default import：
+
+```ts
+import pkg from 'node-sqlite3-wasm'
+const { Database } = pkg
+```
+
+写成 `import { Database } from 'node-sqlite3-wasm'` 会报 `Named export 'Database' not found`。
+
+另外它没有 `better-sqlite3` 的 `db.pragma()` 方法，PRAGMA 走 `db.exec('PRAGMA ...')`。
+
 ## 数据访问抽象
 
 所有数据库操作走一层 repository 接口，**不在业务代码里直接写 SQL**。
 
-理由：`better-sqlite3` 在 Windows 上有（低概率的）编译失败风险，届时需降级为 JSON 存储。有抽象层是换个实现类的事，没有则要改遍全项目。这一层很薄，成本远低于它规避的风险。
+这层抽象已经证明了自己的价值：原定的 `better-sqlite3` 编不过，换 `node-sqlite3-wasm` 时只动了 `connection.ts` 一个文件。没有它就要改遍全项目。

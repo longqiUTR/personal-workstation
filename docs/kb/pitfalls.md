@@ -2,7 +2,7 @@
 
 **这个目录里最值钱的文件。** 修 bug 前必读——很多"新 bug"是老坑换了个表现。
 
-当前条目全部来自**设计评审阶段**（尚无代码），即"差点踩进去但被拦下的坑"。实现时如果发现代码与这里的描述不符，说明代码错了，不是文档过期。
+条目 1-16 来自**设计评审阶段**（尚无代码），即"差点踩进去但被拦下的坑"——实现时若发现代码与描述不符，是代码错了不是文档过期。条目 17 起来自**实施阶段**，是真踩过的。
 
 ---
 
@@ -165,3 +165,28 @@
 **根因**：`mocks` 的四个模块字段没写清是"答对题数"还是"710 分制分值"。四六级是常模标准分转换，非线性且每次考试常模不同，本地无法精确复现。
 
 **修法**：`*_raw`（题数）与 `*_score`（710 分制）分开存；`total` 由 score 相加算出不接受录入；UI 必须明示是粗略估算。详见 [data-model.md](data-model.md#mocks-的分数口径)。
+
+---
+
+## 17. Windows 上 better-sqlite3 装不上，且 npm 官方源慢到不可用
+
+**现象**：`npm install` 挂十几分钟不返回；`better-sqlite3` 最终报 `Could not find any Visual Studio installation to use`。
+
+**两个独立的根因**：
+
+1. **npm 源**：官方 registry 走本机 Clash 代理约 11s/包，装十几个包连带上百个传递依赖会拖到几十分钟。换 `registry.npmmirror.com` 并**摘掉代理**（`env -u HTTP_PROXY -u HTTPS_PROXY npm install`）后，183 个包 47 秒装完。项目根的 `.npmrc` 已固化这个配置。
+2. **better-sqlite3**：没有 Node 20 的预编译二进制，`prebuild-install` 失败后回落到 node-gyp 本地编译，而本机缺 Visual Studio C++ 工具链。
+
+**修法**：存储引擎改用 `node-sqlite3-wasm`（WASM 版 SQLite，零编译）。详见 [data-model.md](data-model.md#存储引擎node-sqlite3-wasm)。
+
+---
+
+## 18. TypeScript 7 会让 npm run tsc 直接崩
+
+**现象**：`tsconfig.json(12,5): error TS5102: Option 'baseUrl' has been removed`；解决后又变成 `vue-tsc` 报 `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath './lib/tsc' is not defined`。
+
+**根因**：装依赖时没锁 TypeScript 版本，npm 拉到最新的 7.x。TS 7 移除了 `baseUrl`，且不再从 exports 暴露 `typescript/lib/tsc`，而 `vue-tsc@3.x` 正是靠这个路径找编译器。
+
+**修法**：`typescript` 锁死 `5.9.3`（不带 `^`），`tsconfig.json` 不写 `baseUrl`（TS 5.x 起 `paths` 直接相对 tsconfig 目录解析，本来就不需要它）。
+
+**教训**：计划里只锁了 `ts-fsrs` 的版本，理由是"`Card` 结构会变"。但凡是**工具链核心**的包都该锁——它们的大版本升级会横向打断整条链路，而不只是改一个数据结构。

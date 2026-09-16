@@ -6,7 +6,7 @@
 
 **Architecture:** 三层。`src/shared/` 是**纯函数层**，装全部判定逻辑（归一化、diff、关键词、计分、rating），无 IO、无框架依赖，可 100% 单测——M1 的风险几乎全集中在这里。`src/server/` 是 Fastify + SQLite，repository 层隔离数据访问。`src/web/` 是 Vue 3 界面。判定规则互相牵制（见 `docs/kb/pitfalls.md` 的 16 条），所以纯函数层严格 TDD，每个测试用例直接对应一条已知陷阱。
 
-**Tech Stack:** Node 20 / TypeScript / Fastify / better-sqlite3 / ts-fsrs（版本钉死）/ Vue 3 + Vite / Vitest
+**Tech Stack:** Node 20 / TypeScript 5.9.3 / Fastify / node-sqlite3-wasm / ts-fsrs 5.4.2 / Vue 3 + Vite / Vitest
 
 **必读前置：** `docs/kb/user-profile.md`（这个项目为什么长这样）、`docs/kb/dictation-engine.md`（判定规则全文）、`docs/kb/pitfalls.md`（16 条陷阱）
 
@@ -85,17 +85,40 @@ npm init -y
 
 `ts-fsrs` **必须钉死版本**（`Card` 结构在版本间变过，而 `words` 表是按 `Card` 铺平的）。先查当前版本再钉：
 
-```bash
-npm view ts-fsrs version
-npm i fastify @fastify/static better-sqlite3 ts-fsrs@<上一步查到的确切版本> vue vue-router
-npm i -D typescript tsx vitest @types/node @types/better-sqlite3 @vitejs/plugin-vue vite vue-tsc
+**先建 `.npmrc`**，否则装依赖会慢到不可用（实测官方 registry 走代理约 11s/包，装十几个包连带上百个传递依赖会拖到几十分钟）：
+
 ```
+registry=https://registry.npmmirror.com
+```
+
+然后装（**摘掉代理**，`env -u HTTP_PROXY -u HTTPS_PROXY npm install ...`，镜像在国内走代理反而慢）：
+
+```bash
+npm i fastify @fastify/static node-sqlite3-wasm ts-fsrs@5.4.2 vue vue-router
+npm i -D typescript@5.9.3 tsx vitest @types/node @vitejs/plugin-vue vite vue-tsc
+```
+
+**两个版本必须锁死，不带 `^`：**
+
+| 包 | 锁定版本 | 不锁会怎样 |
+|---|---|---|
+| `ts-fsrs` | `5.4.2` | `Card` 结构在版本间变过，而 `words` 表是按 `Card` 铺平的，浮动版本会让表结构与库悄悄错位 |
+| `typescript` | `5.9.3` | TS 7 移除了 `baseUrl`，且 `vue-tsc` 找不到 `typescript/lib/tsc`（exports 不再暴露该路径），`npm run tsc` 直接崩 |
 
 `@fastify/static` 是 Task 9 音频流所必需：`reply.sendFile` 来自它，且要靠它支持 Range 请求，否则前端无法 seek 到句子起点。
 
 不装 `@fastify/cors`——前端走 vite proxy（Task 12.5），同源请求不需要 CORS。
 
-装 `better-sqlite3` 时若报编译错误，**先别急着换 JSON**——多数是缺 prebuilt，试 `npm i better-sqlite3 --build-from-source=false`。真装不上再走 repository 层降级（见 `docs/kb/data-model.md`）。
+**存储引擎是 `node-sqlite3-wasm`，不是 `better-sqlite3`。** 后者在本机装不上：没有 Node 20 的预编译二进制，回落到 node-gyp 编译时缺 Visual Studio C++ 工具链。`node-sqlite3-wasm` 是 WASM 版 SQLite，零编译，已实测建表、部分索引（带 `WHERE`）、参数化查询、`all`/`get`/`run`、文件持久化全部可用，`schema.sql` 一个字都不用改。
+
+⚠️ 它是 **CommonJS** 包，在 `"type": "module"` 的项目里必须用 default import：
+
+```ts
+import pkg from 'node-sqlite3-wasm'
+const { Database } = pkg
+```
+
+写成 `import { Database } from 'node-sqlite3-wasm'` 会报 `Named export 'Database' not found`。
 
 - [ ] **Step 3: 写 package.json 的 scripts**
 
@@ -125,12 +148,13 @@ npm i -D typescript tsx vitest @types/node @types/better-sqlite3 @vitejs/plugin-
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "paths": { "@shared/*": ["./src/shared/*"] },
-    "baseUrl": "."
+    "paths": { "@shared/*": ["./src/shared/*"] }
   },
   "include": ["src/**/*", "tests/**/*"]
 }
 ```
+
+**不要加 `baseUrl`。** TS 5.x 起 `paths` 直接相对 tsconfig.json 所在目录解析，不需要它；而 TS 7 已彻底移除该选项，写了会报 `TS5102`。
 
 `noUncheckedIndexedAccess` 打开是刻意的：diff 算法里大量数组下标访问，这个选项能在编译期逼出越界隐患。
 
@@ -1411,17 +1435,21 @@ CREATE INDEX IF NOT EXISTS idx_reviews_word ON reviews(word);
 `src/server/db/connection.ts`：
 
 ```ts
-import Database from 'better-sqlite3'
+// node-sqlite3-wasm 是 CommonJS，"type": "module" 下必须 default import。
+// 写成 import { Database } from '...' 会报 Named export not found。
+import pkg from 'node-sqlite3-wasm'
 import { readFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
+const { Database } = pkg
+
 const DB_PATH = resolve(process.cwd(), 'data/workstation.db')
 
-export function openDatabase(path = DB_PATH): Database.Database {
+export function openDatabase(path = DB_PATH) {
+  // ':memory:' 时 dirname 得到 '.'，mkdirSync 不会抛错，测试可直接传它
   mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+  db.exec('PRAGMA foreign_keys = ON')
   db.exec(readFileSync(resolve(import.meta.dirname, 'schema.sql'), 'utf8'))
   return db
 }
@@ -1429,13 +1457,15 @@ export function openDatabase(path = DB_PATH): Database.Database {
 
 - [ ] **Step 3: repository 层**
 
-**所有 SQL 只许出现在 `src/server/db/repositories/` 下。** 业务代码一律走接口——`better-sqlite3` 万一在 Windows 上编不过要降级 JSON，有这层就是换实现类的事。
+**所有 SQL 只许出现在 `src/server/db/repositories/` 下。** 业务代码一律走接口。这层抽象已经证明了自己的价值：原定的 `better-sqlite3` 在本机编不过，换成 `node-sqlite3-wasm` 时只动了 `connection.ts` 一个文件。
 
 每个 repository 导出一个工厂函数，接收 `db` 返回方法集。例如 `repositories/words.ts`：
 
 ```ts
-import type { Database } from 'better-sqlite3'
 import type { Card } from 'ts-fsrs'
+import type { openDatabase } from '../connection.js'
+
+type Database = ReturnType<typeof openDatabase>
 
 export interface WordRow {
   word: string
