@@ -141,7 +141,9 @@ BBC/VOA 的 transcript 用 `’`（U+2019），用户键盘打的是 `'`（U+002
 
 **距离用 Damerau-Levenshtein，含相邻换位。** 纯 Levenshtein 会把 `receive`/`recieve`、`believe`/`beleive`、`friend`/`freind` 记成 2 步——而相邻换位正是最常见的手滑类型，全判成"听错"就白费了。
 
-需要一份**合法英文词表**（约 10 万词，SCOWL size-60 量级）。**没有它整条规则无法实现**，不是可选依赖。词表过大（如 37 万词的 `words_alpha`）会让生僻词也算真词，手滑被更多地误判成听错。
+需要一份**合法英文词表**。**没有它整条规则无法实现**，不是可选依赖。词表过大（如 37 万词的 `words_alpha`）会让生僻词也算真词，手滑被更多地误判成听错。
+
+实现见 `src/server/wordlists.ts`：取 `wordlist-english` 包里 english/american/british 三个方言、SCOWL [10,20,35,40,50,55,60] 六档的并集，小写化后共 **79465** 词。故意不含 size-70——比 60 档再多约 3.6 万生僻词，会让上面这条规则更容易漏判。
 
 ## 计分规则
 
