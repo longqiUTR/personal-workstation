@@ -31,10 +31,10 @@ src/
   shared/                      纯函数层，无 IO，全部可单测
     types.ts                   领域类型（Mode/Outcome/Rating/DiffResult…）
     wordlists/
-      stopwords.ts             停用词表（约 180 词，字面量）
+      stopwords.ts             停用词表（119 词，字面量）
       homophones.ts            高危同音组（20-30 组，字面量）
       contractions.ts          缩写展开白名单
-      frequency.ts             词频 rank 表加载器
+      frequency.ts             SCOWL size 档加载器（挖空优先级用）
       dictionary.ts            合法英文词表加载器（拼写容错用）
     normalize.ts               归一化流水线（5 步，顺序固定）
     diff.ts                    词级 LCS 对齐 + 拼写容错 + 计分
@@ -61,8 +61,6 @@ src/
 tests/shared/                  纯函数层测试，用例对应 pitfalls.md
   normalize.test.ts  diff.test.ts  keywords.test.ts
   grading.test.ts    transcript.test.ts
-assets/wordlists/              静态词表数据文件（随仓库版本控制）
-  frequency-top20k.txt  dictionary-en.txt
 ```
 
 **边界原则：** `shared/` 不 import `server/` 或 `web/` 的任何东西，也不碰 fs/网络。这条守住，判定逻辑就永远可测。
@@ -223,11 +221,11 @@ git commit -m "chore: scaffold project toolchain"
 
 **Files:**
 - Create: `src/shared/wordlists/stopwords.ts`、`homophones.ts`、`contractions.ts`、`frequency.ts`、`dictionary.ts`
-- Create: `assets/wordlists/frequency-top20k.txt`、`assets/wordlists/dictionary-en.txt`
+- 词表数据取自已安装的 `wordlist-english`，**不新增数据文件**
 
 - [ ] **Step 1: 停用词表**
 
-`src/shared/wordlists/stopwords.ts` —— 标准英文 stopwords，约 180 词，导出 `Set<string>`：
+`src/shared/wordlists/stopwords.ts` —— 标准英文 stopwords，119 词，导出 `Set<string>`：
 
 ```ts
 export const STOPWORDS = new Set([
@@ -322,22 +320,43 @@ export const CONTRACTIONS: ReadonlyArray<[RegExp, string]> = [
 ]
 ```
 
-- [ ] **Step 4: 下载词表数据**
+- [ ] **Step 4: 词表数据 —— 用 npm 包，不要下载文件**
 
-合法英文词表（拼写容错的前提，没它整条规则实现不了）和词频表：
+原计划从 GitHub raw 下 `words_alpha.txt`。**实测 GitHub raw 在本机直接超时**，jsDelivr 要 22 秒，而 npm 镜像 0.2 秒。改用 `wordlist-english`（Task 1 已装为 devDependency）。
 
-```bash
-mkdir -p assets/wordlists
-# 合法英文词表：一行一词，小写
-curl -L -o assets/wordlists/dictionary-en.txt \
-  https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt
+```
+node_modules/wordlist-english/
+  english-words-{10,20,35,40,50,55,60,70}.json
+  american-words-{...}.json   british-words-{...}.json
 ```
 
-⚠️ `words_alpha.txt` 约 **37 万条**，含大量生僻词和古体词，而 spec §10.1 要的是约 10 万词的 SCOWL。词表越大，"打出的是真词 → 判错"这条分支命中越多，手滑会更多地被误判成听错。
+按 **SCOWL size 分级**，正是 spec §10.1 要的 SCOWL 词表。取 `size ≤ 60` 的 english + american + british 三者并集——英式美式拼写都要认（BBC 是英式，VOA 是美式）。
 
-先用它跑通，**若发现错词库变脏（出现明显是手滑却被判错的词），换 SCOWL size-60**。
+**已实测，不必重新验证：**
 
-词频表：取一份 COCA/Google Books 前 2 万词 rank 列表存为 `assets/wordlists/frequency-top20k.txt`，一行一词、按频次降序（行号即 rank）。若一时找不到合适来源，**先用 `words_alpha.txt` 跑不通**——它没有频次信息。临时方案是把 `STOPWORDS` 之外的词全当低频（rank 视为 99999），Task 5 的挖空优先级会退化但不阻塞，后续补表即可。
+| 指标 | 结果 |
+|---|---|
+| size ≤60 三者并集，小写去重 | **79,465 词**（spec 要的 10 万量级） |
+| 该认识的真词（含 `bewildered`/`overwhelmed`/`daunting`） | 15/15 全收 |
+| 该不认识的手滑串（`recieve`/`beleive`/`goverment`/`freind`） | 5/5 全不在表内 |
+
+**不要用 size-70**：会涨到 11.5 万，引入更多生僻词，手滑更容易被误判成"听成了别的词"。
+
+#### 词频表同样由它提供，不需要第二个数据源
+
+SCOWL 的 size 本身就是按常用度分档的，实测：
+
+| 词 | size |
+|---|---|
+| `the` / `government` / `their` / `than` / `effect` | 10 |
+| `overwhelmed` / `weak` | 20 |
+| `bewildered` / `daunting` / `meticulous` / `ubiquitous` | 35 |
+
+各档新增词数：size 10 → 4015、20 → 7096、35 → 29126、40 → 4932、50 → 18323、55 → 5945、60 → 10027。
+
+于是 §5.4 的"词频 rank > 3000 的实词优先挖"落地为：**记录每个词首次出现的 size 档，size 越大越低频、挖空优先级越高**。size 10 那 4015 个词就相当于"rank ≤ 3000"那一档。
+
+一个包解决两个需求，省掉单独的词频表，两份数据也不会互相漂移。
 
 - [ ] **Step 5: 加载器**
 
@@ -363,16 +382,36 @@ export function dictionarySize(): number {
 }
 ```
 
-`src/shared/wordlists/frequency.ts` 同构，导出 `loadFrequency(words)` 和 `rankOf(word): number`（不在表中返回 `Number.MAX_SAFE_INTEGER`）。
+`src/shared/wordlists/frequency.ts` 同构，但基于 SCOWL size 档而非精确 rank：
+
+```ts
+/**
+ * 词的常用度档位，取自 SCOWL size（10/20/35/40/50/55/60）。数字越大越低频。
+ * 不在表中的词视为最低频——挖空时优先级最高。
+ *
+ * 注入式：shared 层不碰 fs，由 server 启动时加载并传入。
+ */
+let tiers: Map<string, number> = new Map()
+
+export function loadWordTiers(entries: Iterable<[string, number]>): void {
+  tiers = new Map([...entries].map(([w, t]) => [w.toLowerCase(), t]))
+}
+
+export function tierOf(word: string): number {
+  return tiers.get(word.toLowerCase()) ?? Number.MAX_SAFE_INTEGER
+}
+```
+
+⚠️ **`shared/` 不读文件。** 真实词表由服务启动流程从 `node_modules/wordlist-english` 读出后调 `loadDictionary()` / `loadWordTiers()` 注入；单元测试直接注入几个词的小集合（Task 4/5 的测试就是这么写的）。这条边界守住，判定逻辑才能保持纯函数、永远可测。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/shared/wordlists assets/wordlists .gitignore
+git add src/shared/wordlists package.json package-lock.json
 git commit -m "feat: add stopword, homophone and contraction word lists"
 ```
 
-注意 `assets/wordlists/*.txt` 体积可能有几 MB。若不想入库，加进 `.gitignore` 并在 README 写明下载命令——但**高危同音组和停用词必须入库**（它们是代码不是数据）。
+仓库里不落任何词表数据文件——数据在 `node_modules/wordlist-english`，靠 `package.json` 锁版本。停用词、高危同音组、缩写白名单这三张表是**代码不是数据**，写成 TS 字面量入库。
 
 ---
 
