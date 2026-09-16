@@ -852,10 +852,11 @@ git commit -m "feat: add word-level diff with real-word spelling tolerance"
 ```ts
 import { describe, it, expect, beforeAll } from 'vitest'
 import { keyWordsOf, candidatePool, pickBlanks, blankCount } from '@shared/keywords'
-import { loadFrequency } from '@shared/wordlists/frequency'
+import { loadWordTiers } from '@shared/wordlists/frequency'
 
 beforeAll(() => {
-  loadFrequency(['the', 'is', 'book', 'car', 'house'])  // rank 1..5
+  // SCOWL size 档：数字越大越低频。zyzzyva 刻意不注入，用来验证"表外词视为最低频"
+  loadWordTiers([['the', 10], ['is', 10], ['book', 10], ['car', 20], ['house', 35]])
 })
 
 describe('keyWordsOf — 关键词是句子的静态属性', () => {
@@ -926,12 +927,22 @@ describe('pickBlanks — 挖空优先级', () => {
 
   it('低频实词优先于高频实词', () => {
     const picked = pickBlanks({
-      pool: ['the', 'zyzzyva'],   // zyzzyva 不在频次表 → rank 极大
+      pool: ['the', 'zyzzyva'],   // zyzzyva 不在词表 → tier 视为最低频
       dueWords: new Set(),
       errorWords: new Set(),
       n: 1,
     })
     expect(picked).toEqual(['zyzzyva'])
+  })
+
+  it('同为实词时 tier 越大（越低频）越优先', () => {
+    const picked = pickBlanks({
+      pool: ['book', 'house'],    // book=10, house=35
+      dueWords: new Set(),
+      errorWords: new Set(),
+      n: 1,
+    })
+    expect(picked).toEqual(['house'])
   })
 
   it('池不足 n 时有几个给几个', () => {
@@ -955,9 +966,13 @@ Expected: FAIL
 ```ts
 import { STOPWORDS } from './wordlists/stopwords.js'
 import { HOMOPHONE_WORDS } from './wordlists/homophones.js'
-import { rankOf } from './wordlists/frequency.js'
+import { tierOf } from './wordlists/frequency.js'
 
-const LOW_FREQUENCY_RANK = 3000
+/**
+ * size 10 那一档约 4015 个词，正好相当于设计里说的"词频 rank ≤ 3000"。
+ * 所以"低频实词"= tier 大于 10 的词。
+ */
+const COMMON_TIER = 10
 
 /**
  * 实词 = 不在停用词表中的词。这是个近似（停用词表推不出词性），
@@ -1016,14 +1031,14 @@ export function pickBlanks(opts: {
     if (dueWords.has(w)) return 0                 // 已到期错词
     if (HOMOPHONE_WORDS.has(w)) return 1          // 高危同音词
     if (errorWords.has(w)) return 2               // 未到期错词
-    if (rankOf(w) > LOW_FREQUENCY_RANK) return 3  // 低频实词
+    if (tierOf(w) > COMMON_TIER) return 3         // 低频实词
     return 4                                      // 其余实词
   }
 
   return [...pool]
     .sort((a, b) => {
       const d = tier(a) - tier(b)
-      return d !== 0 ? d : rankOf(b) - rankOf(a)  // 同档内越低频越优先
+      return d !== 0 ? d : tierOf(b) - tierOf(a)  // 同档内越低频越优先
     })
     .slice(0, n)
 }
